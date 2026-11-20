@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Recoder — Free Screen Recorder",
+  "short_name": "Recoder",
+  "version": "1.0.0",
+  "description": "Free, private, unlimited-length screen recorder with microphone and tab/system audio. Everything stays on your device.",
+  "action": {
+    "default_title": "Open Recoder",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" }
+  },
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["unlimitedStorage"],
+  "minimum_chrome_version": "116"
+}

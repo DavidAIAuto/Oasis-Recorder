@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'" />
+<title>Choose what to record</title>
+<style>
+  :root { color-scheme: dark; font-family: -apple-system, system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #09090b; color: #f4f4f5; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 18px 20px 0; }
+  h1 { font-size: 16px; margin: 0 0 12px; font-weight: 600; }
+  .tabs { display: inline-flex; background: #27272a; border-radius: 10px; padding: 3px; }
+  .tabs button { border: 0; background: none; color: #a1a1aa; padding: 6px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: #f4f4f5; color: #18181b; }
+  main { flex: 1; overflow: auto; padding: 16px 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; align-content: start; }
+  .card { border: 2px solid transparent; background: #18181b; border-radius: 12px; padding: 8px; cursor: pointer; text-align: left; color: inherit; font: inherit; }
+  .card:hover { border-color: #52525b; }
+  .card[aria-checked="true"] { border-color: #ef4444; background: #2a1414; }
+  .thumb { aspect-ratio: 16/10; background: #000; border-radius: 8px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .thumb img { max-width: 100%; max-height: 100%; }
+  .name { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; color: #d4d4d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name img { width: 16px; height: 16px; flex: none; }
+  .empty, .perm { grid-column: 1 / -1; text-align: center; color: #a1a1aa; font-size: 13px; padding: 40px 10px; line-height: 1.6; }
+  .perm button { margin-top: 10px; }
+  footer { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-top: 1px solid #27272a; }
+  label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #d4d4d8; margin-right: auto; }
+  .btn { border: 1px solid #3f3f46; background: #27272a; color: #f4f4f5; border-radius: 9px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  .btn.primary { background: #dc2626; border-color: #dc2626; font-weight: 600; }
+  .btn:disabled { opacity: .45; cursor: default; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Choose what to record</h1>
+  <div class="tabs" role="tablist">
+    <button role="tab" data-tab="screen">Entire Screen</button>
+    <button role="tab" data-tab="window">Window</button>
+  </div>
+</header>
+<main id="grid" role="radiogroup" aria-label="Sources"><div class="empty">Loading sources…</div></main>
+<footer>
+  <label><input type="checkbox" id="audio" /> Record system audio</label>
+  <button class="btn" id="cancel">Cancel</button>
+  <button class="btn primary" id="share" disabled>Start Recording</button>
+</footer>
+<script>
+  const grid = document.getElementById('grid');
+  const shareBtn = document.getElementById('share');
+  const audio = document.getElementById('audio');
+  let data = { sources: [], preference: { surface: 'monitor', audio: true }, screenAccess: 'granted' };
+  let tab = 'screen';
+  let selected = null;
+
+  function el(tag, attrs = {}, children = []) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) k === 'text' ? (e.textContent = v) : e.setAttribute(k, v);
+    children.forEach((c) => e.appendChild(c));
+    return e;
+  }
+
+  function render() {
+    document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+    grid.replaceChildren();
+    const list = data.sources.filter((s) => s.type === tab);
+    if (data.screenAccess !== 'granted' && !data.sources.some((s) => s.thumbnail)) {
+      const btn = el('button', { class: 'btn', text: 'Open Privacy Settings' });
+      btn.onclick = () => window.picker.openPrivacySettings();
+      grid.appendChild(el('div', { class: 'perm' }, [
+        el('div', { text: 'Recoder needs Screen Recording permission.' }),
+        el('div', { text: 'Enable it in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen Recoder.' }),
+        btn,
+      ]));
+    }
+    if (!list.length) {
+      grid.appendChild(el('div', { class: 'empty', text: tab === 'screen' ? 'No screens found.' : 'No windows found.' }));
+    }
+    for (const s of list) {
+      const thumb = el('div', { class: 'thumb' }, s.thumbnail ? [el('img', { src: s.thumbnail, alt: '' })] : []);
+      const name = el('div', { class: 'name' }, [...(s.icon ? [el('img', { src: s.icon, alt: '' })] : []), el('span', { text: s.name })]);
+      const card = el('button', { class: 'card', role: 'radio', 'aria-checked': String(selected === s.id), title: s.name }, [thumb, name]);
+      card.onclick = () => { selected = s.id; shareBtn.disabled = false; render(); };
+      card.ondblclick = () => { selected = s.id; share(); };
+      grid.appendChild(card);
+    }
+  }
+
+  function share() { if (selected) window.picker.choose(selected, audio.checked); }
+
+  document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => { tab = b.dataset.tab; render(); }));
+  document.getElementById('cancel').onclick = () => window.picker.choose(null);
+  shareBtn.onclick = share;
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.picker.choose(null);
+    if (e.key === 'Enter') share();
+  });
+
+  window.picker.init().then((d) => {
+    data = d;
+    tab = d.preference.surface === 'window' ? 'window' : 'screen';
+    audio.checked = !!d.preference.audio;
+    const first = d.sources.find((s) => s.type === tab);
+    if (tab === 'screen' && first) { selected = first.id; shareBtn.disabled = false; }
+    render();
+  });
+</script>
+</body>
+</html>

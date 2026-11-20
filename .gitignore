@@ -1,0 +1,7 @@
+node_modules
+dist
+dist-extension
+dist-electron
+release
+recoder-extension.zip
+.DS_Store

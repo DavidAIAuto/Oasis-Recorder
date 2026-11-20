@@ -1,0 +1,75 @@
+{
+  "name": "recoder",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "build:extension": "tsc --noEmit && vite build --mode extension && cd dist-extension && zip -qr ../recoder-extension.zip .",
+    "build:electron": "tsc --noEmit && vite build --mode electron",
+    "app": "npm run build:electron && electron .",
+    "dist:mac": "npm run build:electron && electron-builder --mac"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8",
+    "lucide-react": "^1.77.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "main": "electron/main.cjs",
+  "description": "Free, private, unlimited-length screen recorder",
+  "author": "Recoder",
+  "build": {
+    "appId": "app.recoder.desktop",
+    "productName": "Recoder",
+    "files": [
+      "dist-electron/**",
+      "electron/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build-resources"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.video",
+      "icon": "build-resources/icon.png",
+      "identity": null,
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Recoder records your microphone so your voice is included in screen recordings.",
+        "NSCameraUsageDescription": "Recoder does not use the camera.",
+        "NSScreenCaptureUsageDescription": "Recoder records your screen or the windows you choose.",
+        "NSAudioCaptureUsageDescription": "Recoder can include your Mac's audio in recordings."
+      }
+    },
+    "dmg": {
+      "title": "Recoder"
+    }
+  }
+}
