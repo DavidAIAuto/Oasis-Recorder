@@ -35,6 +35,8 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: mode === 'extension' ? 'dist-extension' : mode === 'electron' ? 'dist-electron' : 'dist',
       emptyOutDir: true,
+      // The MP4 converter (mediabunny) is a lazily-loaded chunk, only fetched when converting.
+      chunkSizeWarningLimit: 1000,
     },
   };
 });

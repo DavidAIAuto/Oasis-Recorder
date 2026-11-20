@@ -1,6 +1,6 @@
 # Recoder
 
-A free, private screen recorder with no length limit. It records your screen, a window or a tab, with microphone and system audio. Recordings stream to disk as they're made (OPFS), so multi-hour sessions don't fill up RAM, and a crash doesn't lose the recording. No account, no watermark, no servers.
+A free, private screen recorder with no length limit. It records your screen, a window or a tab, with microphone and system audio, and saves recordings as **MP4** (H.264/AAC). Recordings stream to disk as they're made (OPFS), so multi-hour sessions don't fill up RAM, and a crash doesn't lose the recording. No account, no watermark, no servers.
 
 See [SPEC.md](SPEC.md) for the full specification.
 
@@ -30,3 +30,7 @@ electron/            macOS shell: main process, preloads, screen/window picker
 platforms/extension/ MV3 manifest, background worker, icons
 public/              PWA manifest + service worker
 ```
+
+## MP4 output
+
+Recordings are made directly in MP4 (H.264 + AAC) wherever the browser supports it: Chrome/Edge 126+, Safari and the desktop app. A keyframe every second keeps data flushing to disk. In Firefox, and for older WebM recordings, **Save as MP4** converts the file with WebCodecs (mediabunny). The conversion streams from disk to the destination file, so memory stays flat even for very long recordings.

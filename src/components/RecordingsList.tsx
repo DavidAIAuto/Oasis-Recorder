@@ -1,13 +1,13 @@
 import { Download, Film, Loader2, Play, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { canSaveAs, exportFileName, getPlayableBlob } from '../services/exporter';
+import { type ExportOptions, canSaveAs, exportFileName, getPlayableBlob, needsConversion } from '../services/exporter';
 import { formatBytes, formatDuration } from '../lib/format';
 import type { RecordingMeta } from '../types/recording';
 
 interface Props {
   items: RecordingMeta[];
   loading: boolean;
-  onSave: (m: RecordingMeta) => Promise<void>;
+  onSave: (m: RecordingMeta, o: ExportOptions) => Promise<void>;
   onDelete: (m: RecordingMeta) => Promise<void>;
 }
 
@@ -43,7 +43,7 @@ function PreviewModal({ meta, onClose, onSave }: { meta: RecordingMeta; onClose:
           <div className="min-w-0 truncate text-sm font-medium">{exportFileName(meta)}</div>
           <div className="flex items-center gap-2">
             <button onClick={onSave} className="flex items-center gap-1.5 rounded-lg bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-900 hover:bg-white">
-              <Download className="size-4" /> {canSaveAs() ? 'Save As…' : 'Download'}
+              <Download className="size-4" /> {canSaveAs() ? 'Save as MP4…' : 'Download MP4'}
             </button>
             <button onClick={onClose} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label="Close preview">
               <X className="size-5" />
@@ -68,6 +68,22 @@ export function RecordingsList({ items, loading, onSave, onDelete }: Props) {
   const [preview, setPreview] = useState<RecordingMeta | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<{ id: string; progress: number | null; ctrl: AbortController } | null>(null);
+
+  const save = async (m: RecordingMeta) => {
+    if (exporting) return;
+    const ctrl = new AbortController();
+    const converting = needsConversion(m);
+    setExporting({ id: m.id, progress: converting ? 0 : null, ctrl });
+    try {
+      await onSave(m, {
+        signal: ctrl.signal,
+        onProgress: converting ? (p) => setExporting((e) => (e && e.id === m.id ? { ...e, progress: p } : e)) : undefined,
+      });
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const run = async (id: string, fn: () => Promise<void>) => {
     setBusy(id);
@@ -115,14 +131,37 @@ export function RecordingsList({ items, loading, onSave, onDelete }: Props) {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                disabled={busy === m.id}
-                onClick={() => run(m.id, () => onSave(m))}
-                className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-              >
-                {busy === m.id ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-                {canSaveAs() ? 'Save to Computer' : 'Download'}
-              </button>
+              {exporting?.id === m.id ? (
+                <div className="flex items-center gap-2">
+                  {exporting.progress !== null ? (
+                    <div className="w-40" title="Converting to MP4">
+                      <div className="mb-1 flex justify-between text-[11px] text-zinc-400">
+                        <span>Converting to MP4…</span>
+                        <span className="tabular-nums">{Math.round(exporting.progress * 100)}%</span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded bg-zinc-800">
+                        <div className="h-full bg-red-500 transition-[width]" style={{ width: `${exporting.progress * 100}%` }} />
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-sm text-zinc-400">
+                      <Loader2 className="size-4 animate-spin" /> Saving…
+                    </span>
+                  )}
+                  <button onClick={() => exporting.ctrl.abort()} className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800">
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  disabled={!!exporting || busy === m.id}
+                  onClick={() => void save(m)}
+                  className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  <Download className="size-4" />
+                  {canSaveAs() ? 'Save as MP4' : 'Download MP4'}
+                </button>
+              )}
               {confirmDelete === m.id ? (
                 <button
                   onClick={() => run(m.id, () => onDelete(m)).finally(() => setConfirmDelete(null))}
@@ -145,7 +184,10 @@ export function RecordingsList({ items, loading, onSave, onDelete }: Props) {
           </li>
         ))}
       </ul>
-      {preview && <PreviewModal meta={preview} onClose={() => setPreview(null)} onSave={() => void onSave(preview)} />}
+      {preview && <PreviewModal meta={preview} onClose={() => setPreview(null)} onSave={() => {
+            setPreview(null);
+            void save(preview);
+          }} />}
     </>
   );
 }

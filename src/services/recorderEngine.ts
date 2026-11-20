@@ -156,7 +156,10 @@ export class RecorderEngine {
         mimeType: mime.mimeType,
         videoBitsPerSecond: videoBitrateFor(settings.resolution, settings.fps),
         audioBitsPerSecond: this.mixer ? AUDIO_BPS : undefined,
-      });
+        // Keyframe every second: Chrome's MP4 muxer only emits a fragment at keyframes, so this
+        // keeps data flowing to disk ~every second instead of buffering it in memory.
+        videoKeyFrameIntervalDuration: 1000,
+      } as MediaRecorderOptions);
 
       // Only now (permissions granted, user didn't cancel) do we create files on disk.
       const id = (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`).replace(/[^a-z0-9-]/gi, '');

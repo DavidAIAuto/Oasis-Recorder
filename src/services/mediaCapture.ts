@@ -81,12 +81,16 @@ export async function listMics(): Promise<MediaDeviceInfo[]> {
   return all.filter((d) => d.kind === 'audioinput');
 }
 
+// MP4 (H.264 + AAC) first: plays everywhere (QuickTime, iPhone, editors) and needs no
+// conversion on export. Chrome/Edge 126+, Safari and the desktop app support it; Firefox
+// falls back to WebM, which is converted to MP4 when saving.
 const MIME_CANDIDATES = [
+  'video/mp4;codecs=avc1,mp4a.40.2',
+  'video/mp4;codecs=avc1,opus',
+  'video/mp4',
   'video/webm;codecs=vp9,opus',
   'video/webm;codecs=vp8,opus',
   'video/webm',
-  'video/mp4;codecs=avc1,mp4a.40.2',
-  'video/mp4',
 ];
 
 export function pickMimeType(): { mimeType: string; ext: 'webm' | 'mp4' } | null {

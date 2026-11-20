@@ -12,7 +12,8 @@ import { useAudioMeter } from './hooks/useAudioMeter';
 import { useMediaDevices, useMicPreview } from './hooks/useMediaDevices';
 import { useElapsed, useRecorder } from './hooks/useRecorder';
 import { formatBytes } from './lib/format';
-import { exportRecording } from './services/exporter';
+import { type ExportOptions, cleanupTempExports, exportRecording } from './services/exporter';
+import { ConversionCancelled } from './services/mp4Converter';
 import { hasDisplayMedia, hasMediaRecorder } from './services/mediaCapture';
 import {
   type InterruptedSession,
@@ -105,6 +106,7 @@ export default function App() {
   useEffect(() => {
     void refreshLibrary();
     if (supported.opfs) {
+      void cleanupTempExports();
       findInterrupted()
         .then(setInterrupted)
         .catch(() => setInterrupted([]));
@@ -173,12 +175,16 @@ export default function App() {
   }, [mic.error, mic.stream, pushToast, rec, settings]);
 
   const save = useCallback(
-    async (m: RecordingMeta) => {
+    async (m: RecordingMeta, o: ExportOptions) => {
       try {
-        const r = await exportRecording(m);
-        if (r === 'saved') pushToast('success', 'Recording saved to your computer.');
-        else if (r === 'downloaded') pushToast('info', 'Download started — check your Downloads folder.');
+        const r = await exportRecording(m, o);
+        if (r === 'saved') pushToast('success', 'MP4 saved to your computer.');
+        else if (r === 'downloaded') pushToast('info', 'MP4 download started — check your Downloads folder.');
       } catch (e) {
+        if (e instanceof ConversionCancelled || (e instanceof DOMException && e.name === 'AbortError')) {
+          pushToast('info', 'Save cancelled.');
+          return;
+        }
         pushToast('error', `Export failed: ${(e as Error).message}`);
       }
     },
