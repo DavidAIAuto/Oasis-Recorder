@@ -39,21 +39,43 @@
 <script>
   document.getElementById('close').addEventListener('click', () => window.bubble?.close());
   (async () => {
-    const deviceId = new URLSearchParams(location.search).get('deviceId');
+    // The app passes the camera's name, not its ID: device IDs differ per page origin.
+    const wanted = new URLSearchParams(location.search).get('camera');
+    const findByName = async () =>
+      (await navigator.mediaDevices.enumerateDevices()).find((d) => d.kind === 'videoinput' && d.label === wanted);
     const fail = (text) => {
       document.getElementById('msg').textContent = text;
       document.getElementById('bubble').classList.add('error');
     };
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 30, max: 30 },
-        },
-      });
+      const open = (deviceId) =>
+        navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 30, max: 30 },
+          },
+        });
+      let stream;
+      if (wanted) {
+        // Labels are only listed once camera access is in use; if they're hidden, open the
+        // default camera first, then switch if the chosen one is a different device.
+        let match = await findByName();
+        if (!match || !match.label) {
+          stream = await open(null);
+          match = await findByName();
+          if (match && stream.getVideoTracks()[0]?.getSettings().deviceId !== match.deviceId) {
+            stream.getTracks().forEach((t) => t.stop());
+            stream = await open(match.deviceId);
+          }
+        } else {
+          stream = await open(match.deviceId);
+        }
+        // Chosen camera not connected: fall back to the default one rather than failing.
+      }
+      if (!stream) stream = await open(null);
       document.getElementById('v').srcObject = stream;
       stream.getVideoTracks()[0]?.addEventListener('ended', () => fail('Camera disconnected'));
     } catch (e) {

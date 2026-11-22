@@ -221,15 +221,16 @@ export default function App() {
   }, [bubbleOpen, settings.bubbleSize, pip.pipWindow]);
 
   // Desktop app: the bubble is a native always-on-top window driven by the settings.
+  const bubbleCameraLabel = (settings.cameraDeviceId && devices.cameras.find((c) => c.deviceId === settings.cameraDeviceId)?.label) || null;
   const [nativeBubbleHidden, setNativeBubbleHidden] = useState(false);
   useEffect(() => {
     if (phase === 'idle') setNativeBubbleHidden(false);
   }, [phase]);
   useEffect(() => {
     if (!native) return;
-    if (electronFloating && !nativeBubbleHidden) native.showBubble(settings.cameraDeviceId, settings.bubbleSize);
+    if (electronFloating && !nativeBubbleHidden) native.showBubble(bubbleCameraLabel, settings.bubbleSize);
     else native.hideBubble();
-  }, [electronFloating, nativeBubbleHidden, settings.cameraDeviceId, settings.bubbleSize]);
+  }, [electronFloating, nativeBubbleHidden, bubbleCameraLabel, settings.bubbleSize]);
 
   // The × on the desktop bubble switches the camera off (also mid-recording: floating mode
   // doesn't involve the recorder, so nothing else changes).

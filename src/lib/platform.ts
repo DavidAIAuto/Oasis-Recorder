@@ -6,8 +6,11 @@ export interface NativeBridge {
   os: string;
   setSharePreference(surface: ShareSurface, audio: boolean): void;
   reuseLastChoiceWithoutAudio(): void;
-  /** Show (or update) the floating camera bubble window. */
-  showBubble(deviceId: string | null, size: BubbleSize): void;
+  /**
+   * Show (or update) the floating camera bubble window. The camera is given by its label:
+   * device IDs differ per origin, and the bubble window runs on a different one.
+   */
+  showBubble(cameraLabel: string | null, size: BubbleSize): void;
   hideBubble(): void;
   /** The user closed the bubble with its × button. Returns an unsubscribe function. */
   onBubbleClosed(cb: () => void): () => void;

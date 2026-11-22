@@ -145,10 +145,10 @@ const BUBBLE_PX = { S: 160, M: 220, L: 300 };
 const BUBBLE_MARGIN = 24;
 /** @type {BrowserWindow | null} */
 let bubbleWindow = null;
-let bubbleDeviceId = null;
+let bubbleCamera = null;
 let bubbleWanted = false;
-/** @type {{ deviceId: string | null, size: string }} */
-let bubbleOpts = { deviceId: null, size: 'M' };
+/** @type {{ camera: string | null, size: string }} */
+let bubbleOpts = { camera: null, size: 'M' };
 let bubbleCreating = false;
 
 const bubbleAlive = () => !!bubbleWindow && !bubbleWindow.isDestroyed();
@@ -157,9 +157,11 @@ function bubbleSizePx(size) {
   return BUBBLE_PX[size] ?? BUBBLE_PX.M;
 }
 
-function loadBubble(win, deviceId) {
-  bubbleDeviceId = deviceId;
-  void win.loadFile(path.join(__dirname, 'bubble.html'), { query: deviceId ? { deviceId } : {} }).catch(() => {});
+// `camera` is the device *label*: device IDs are salted per origin, so the app page's ID
+// means nothing to the bubble page (file://). Names are the same everywhere.
+function loadBubble(win, camera) {
+  bubbleCamera = camera;
+  void win.loadFile(path.join(__dirname, 'bubble.html'), { query: camera ? { camera } : {} }).catch(() => {});
 }
 
 /** Bring an existing bubble window in line with the latest options. */
@@ -177,7 +179,7 @@ function applyBubbleOpts(win) {
       height: px,
     });
   }
-  if (bubbleOpts.deviceId !== bubbleDeviceId) loadBubble(win, bubbleOpts.deviceId);
+  if (bubbleOpts.camera !== bubbleCamera) loadBubble(win, bubbleOpts.camera);
 }
 
 function createBubbleWindow() {
@@ -207,7 +209,7 @@ function createBubbleWindow() {
     },
   });
   bubbleWindow = win;
-  bubbleDeviceId = null;
+  bubbleCamera = null;
   win.setAlwaysOnTop(true, 'floating');
   // skipTransformProcessType: without it macOS turns Recoder into a background-only app
   // (no Dock icon, no menu bar), leaving users unable to quit it.
@@ -221,16 +223,16 @@ function createBubbleWindow() {
   win.on('closed', () => {
     if (bubbleWindow === win) {
       bubbleWindow = null;
-      bubbleDeviceId = null;
+      bubbleCamera = null;
     }
   });
-  loadBubble(win, bubbleOpts.deviceId);
+  loadBubble(win, bubbleOpts.camera);
 }
 
 async function showBubble(opts) {
   bubbleWanted = true;
   bubbleOpts = {
-    deviceId: typeof opts.deviceId === 'string' && opts.deviceId ? opts.deviceId : null,
+    camera: typeof opts.camera === 'string' && opts.camera ? opts.camera : null,
     size: typeof opts.size === 'string' ? opts.size : 'M',
   };
   if (bubbleAlive()) {
@@ -255,7 +257,7 @@ function hideBubble() {
   bubbleWanted = false;
   if (bubbleAlive()) bubbleWindow.destroy();
   bubbleWindow = null;
-  bubbleDeviceId = null;
+  bubbleCamera = null;
 }
 
 ipcMain.on('recoder:bubble-show', (_e, opts) => void showBubble(opts && typeof opts === 'object' ? opts : {}));
