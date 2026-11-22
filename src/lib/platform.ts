@@ -1,4 +1,4 @@
-import type { ShareSurface } from '../types/recording';
+import type { BubbleSize, ShareSurface } from '../types/recording';
 
 /** Bridge exposed by the Electron preload script (undefined in the browser / extension). */
 export interface NativeBridge {
@@ -6,6 +6,9 @@ export interface NativeBridge {
   os: string;
   setSharePreference(surface: ShareSurface, audio: boolean): void;
   reuseLastChoiceWithoutAudio(): void;
+  /** Show (or update) the floating camera bubble window. */
+  showBubble(deviceId: string | null, size: BubbleSize): void;
+  hideBubble(): void;
 }
 
 declare global {

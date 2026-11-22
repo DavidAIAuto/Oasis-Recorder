@@ -1,5 +1,6 @@
 import { Circle, HardDrive, Lock, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BUBBLE_PX, CameraBubble } from './components/CameraBubble';
 import { Countdown } from './components/Countdown';
 import { ErrorBanner } from './components/ErrorBanner';
 import { MiniPiPControls, isPipSupported, usePipWindow } from './components/MiniPiPControls';
@@ -9,9 +10,11 @@ import { RecoveryBanner } from './components/RecoveryBanner';
 import { SetupPanel } from './components/SetupPanel';
 import { Toasts } from './components/Toasts';
 import { useAudioMeter } from './hooks/useAudioMeter';
-import { useMediaDevices, useMicPreview } from './hooks/useMediaDevices';
+import { useCameraPreview, useMediaDevices, useMicPreview } from './hooks/useMediaDevices';
 import { useElapsed, useRecorder } from './hooks/useRecorder';
 import { formatBytes } from './lib/format';
+import { isElectron, native } from './lib/platform';
+import { isCompositorSupported } from './services/cameraCompositor';
 import { type ExportOptions, cleanupTempExports, exportRecording } from './services/exporter';
 import { ConversionCancelled } from './services/mp4Converter';
 import { hasDisplayMedia, hasMediaRecorder } from './services/mediaCapture';
@@ -24,7 +27,7 @@ import {
   isOpfsSupported,
   listCompleted,
 } from './services/opfsStorage';
-import type { QuotaInfo, RecordingMeta, RecordingSettings, Toast, ToastKind } from './types/recording';
+import type { BubbleSize, CameraMode, QuotaInfo, RecordingMeta, RecordingSettings, Toast, ToastKind } from './types/recording';
 
 const SETTINGS_KEY = 'recoder.settings.v1';
 
@@ -40,6 +43,11 @@ const DEFAULT_SETTINGS: RecordingSettings = {
   noiseSuppression: true,
   autoGainControl: true,
   countdown: true,
+  cameraEnabled: false,
+  cameraDeviceId: null,
+  cameraMode: 'floating',
+  bubbleSize: 'M',
+  bubbleCorner: 'bl',
 };
 
 function loadSettings(): RecordingSettings {
@@ -72,9 +80,19 @@ export default function App() {
   const toastSeq = useRef(0);
 
   const supported = useMemo(
-    () => ({ opfs: isOpfsSupported(), display: hasDisplayMedia(), recorder: hasMediaRecorder(), pip: isPipSupported() }),
+    () => ({ opfs: isOpfsSupported(), display: hasDisplayMedia(), recorder: hasMediaRecorder(), pip: isPipSupported(), compositor: isCompositorSupported() }),
     [],
   );
+
+  // Camera bubble: floating needs Document PiP (browser) or the desktop app's bubble window;
+  // "in video" needs the worker compositor. Fall back to whichever mode this browser has.
+  const floatingAvailable = isElectron || supported.pip;
+  const cameraSupported = floatingAvailable || supported.compositor;
+  const cameraMode: CameraMode =
+    settings.cameraMode === 'composite' ? (supported.compositor ? 'composite' : 'floating') : floatingAvailable ? 'floating' : 'composite';
+  const cameraOn = settings.cameraEnabled && cameraSupported && supported.display;
+  const electronFloating = isElectron && cameraOn && cameraMode === 'floating';
+  const webFloating = !isElectron && cameraOn && cameraMode === 'floating';
 
   /* ----------------------------- toasts ----------------------------- */
   const dismissToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
@@ -143,6 +161,15 @@ export default function App() {
     }
   }, [devices.mics, settings.micDeviceId, phase, pushToast]);
 
+  /* ----------------------------- camera ----------------------------- */
+  // In the desktop app's floating mode the bubble window opens the camera itself.
+  const camera = useCameraPreview({
+    enabled: cameraOn && !electronFloating,
+    deviceId: settings.cameraDeviceId,
+    locked: phase !== 'idle',
+    onAcquired: devices.refresh,
+  });
+
   const level = useAudioMeter(active ? rec.analyser : mic.analyser);
 
   const updateSettings = useCallback(
@@ -161,18 +188,73 @@ export default function App() {
     [rec],
   );
 
+  /* ----------------------------- PiP / camera bubble ----------------------------- */
+  const pip = usePipWindow();
+  const bubbleOpen = !!pip.pipWindow && pip.kind === 'bubble';
+  const openBubble = useCallback(
+    (size: BubbleSize) => {
+      const px = BUBBLE_PX[size];
+      void pip.open('bubble', { width: px, height: px });
+    },
+    [pip],
+  );
+  useEffect(() => {
+    if (!active && pip.pipWindow && pip.kind === 'controls') pip.close();
+  }, [active, pip]);
+  // Camera turned off or switched to "in video" → the floating bubble goes away.
+  useEffect(() => {
+    if (bubbleOpen && !webFloating) pip.close();
+  }, [bubbleOpen, webFloating, pip]);
+  useEffect(() => {
+    if (!bubbleOpen) return;
+    const px = BUBBLE_PX[settings.bubbleSize];
+    try {
+      pip.pipWindow?.resizeTo(px, px);
+    } catch {
+      /* needs user activation; the user can resize the window by hand */
+    }
+  }, [bubbleOpen, settings.bubbleSize, pip.pipWindow]);
+
+  // Desktop app: the bubble is a native always-on-top window driven by the settings.
+  const [nativeBubbleHidden, setNativeBubbleHidden] = useState(false);
+  useEffect(() => {
+    if (phase === 'idle') setNativeBubbleHidden(false);
+  }, [phase]);
+  useEffect(() => {
+    if (!native) return;
+    if (electronFloating && !nativeBubbleHidden) native.showBubble(settings.cameraDeviceId, settings.bubbleSize);
+    else native.hideBubble();
+  }, [electronFloating, nativeBubbleHidden, settings.cameraDeviceId, settings.bubbleSize]);
+
+  // Setup changes come from clicks, so the PiP bubble can be opened right here (user activation).
+  const onSetupChange = useCallback(
+    (patch: Partial<RecordingSettings>) => {
+      updateSettings(patch);
+      const next = { ...settings, ...patch };
+      const turnedOn = patch.cameraEnabled === true || (patch.cameraMode === 'floating' && next.cameraEnabled);
+      if (turnedOn && !isElectron && supported.pip && next.cameraMode === 'floating' && !bubbleOpen) openBubble(next.bubbleSize);
+    },
+    [bubbleOpen, openBubble, settings, supported.pip, updateSettings],
+  );
+
   /* ----------------------------- actions ----------------------------- */
   const start = useCallback(async () => {
     setError(null);
     if (settings.micEnabled && !mic.stream) {
       pushToast('warning', mic.error ? 'Microphone unavailable — recording without it.' : 'Microphone not ready — recording without it.');
     }
+    if (cameraOn && cameraMode === 'composite' && !camera.stream) {
+      pushToast('warning', camera.error ? 'Camera unavailable — recording without it.' : 'Camera not ready — recording without it.');
+    }
+    if (webFloating && !bubbleOpen) {
+      pushToast('info', 'The camera bubble is closed — click "Show Camera" to bring it back.');
+    }
     try {
-      await rec.start(settings, settings.micEnabled ? mic.stream : null);
+      await rec.start({ ...settings, cameraEnabled: cameraOn, cameraMode }, settings.micEnabled ? mic.stream : null, cameraMode === 'composite' ? camera.stream : null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [mic.error, mic.stream, pushToast, rec, settings]);
+  }, [bubbleOpen, camera.error, camera.stream, cameraMode, cameraOn, mic.error, mic.stream, pushToast, rec, settings, webFloating]);
 
   const save = useCallback(
     async (m: RecordingMeta, o: ExportOptions) => {
@@ -231,12 +313,6 @@ export default function App() {
     [pushToast, refreshLibrary],
   );
 
-  /* ----------------------------- PiP ----------------------------- */
-  const pip = usePipWindow();
-  useEffect(() => {
-    if (!active && pip.pipWindow) pip.close();
-  }, [active, pip]);
-
   /* ----------------------------- guards ----------------------------- */
   useEffect(() => {
     if (!active) return;
@@ -264,6 +340,14 @@ export default function App() {
     onStop: () => void rec.stop(),
     onToggleMute: rec.toggleMute,
   };
+
+  const recordingCamera = rec.state.meta?.hasCamera
+    ? { hidden: rec.state.cameraHidden, disabled: !rec.state.cameraLive, onToggle: () => rec.setCameraHidden(!rec.state.cameraHidden) }
+    : webFloating
+      ? { hidden: !bubbleOpen, onToggle: () => (bubbleOpen ? pip.close() : openBubble(settings.bubbleSize)) }
+      : electronFloating
+        ? { hidden: nativeBubbleHidden, onToggle: () => setNativeBubbleHidden((h) => !h) }
+        : undefined;
 
   const unsupported = !supported.opfs || !supported.display || !supported.recorder;
 
@@ -302,11 +386,18 @@ export default function App() {
 
         <section className="rounded-3xl border border-zinc-800 bg-zinc-900/60 p-5 shadow-2xl shadow-black/40 backdrop-blur sm:p-7">
           {active ? (
-            <RecordingBar {...controls} pipSupported={supported.pip} pipOpen={!!pip.pipWindow} onTogglePip={() => (pip.pipWindow ? pip.close() : void pip.open())} />
+            <RecordingBar
+              {...controls}
+              // In floating camera mode the PiP window is the bubble, which has its own controls.
+              pipSupported={supported.pip && !webFloating}
+              pipOpen={!!pip.pipWindow}
+              onTogglePip={() => (pip.pipWindow ? pip.close() : void pip.open())}
+              camera={recordingCamera}
+            />
           ) : (
             <SetupPanel
               settings={settings}
-              onChange={updateSettings}
+              onChange={onSetupChange}
               mics={devices.mics}
               onRefreshMics={devices.refresh}
               micLevel={level}
@@ -316,6 +407,19 @@ export default function App() {
               busy={phase === 'starting' || phase === 'countdown'}
               onStart={start}
               systemAudioHint={systemAudioHint()}
+              camera={{
+                supported: cameraSupported && supported.display,
+                floatingAvailable,
+                compositeAvailable: supported.compositor,
+                mode: cameraMode,
+                devices: devices.cameras,
+                stream: camera.stream,
+                error: camera.error,
+                showPreview: !electronFloating,
+                canOpenBubble: webFloating,
+                bubbleOpen,
+                onOpenBubble: () => openBubble(settings.bubbleSize),
+              }}
             />
           )}
         </section>
@@ -343,7 +447,9 @@ export default function App() {
       </footer>
 
       {phase === 'countdown' && <Countdown value={rec.state.countdown} onCancel={() => void rec.stop()} />}
-      <MiniPiPControls pipWindow={pip.pipWindow} {...controls} />
+      <MiniPiPControls pipWindow={pip.pipWindow} {...controls}>
+        {pip.kind === 'bubble' ? <CameraBubble stream={camera.stream} active={active} controls={controls} /> : undefined}
+      </MiniPiPControls>
       <Toasts toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

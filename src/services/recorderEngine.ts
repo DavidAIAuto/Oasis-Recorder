@@ -1,5 +1,6 @@
 import type { EngineState, RecordingMeta, RecordingSettings, ToastKind } from '../types/recording';
 import { AudioMixer } from './audioMixer';
+import { CameraCompositor, isCompositorSupported } from './cameraCompositor';
 import {
   AUDIO_BPS,
   describeMediaError,
@@ -35,6 +36,8 @@ const INITIAL: EngineState = {
   bytesWritten: 0,
   micMuted: false,
   micLive: false,
+  cameraLive: false,
+  cameraHidden: false,
   quota: null,
   lowSpace: false,
 };
@@ -55,6 +58,7 @@ export class RecorderEngine {
   private countdownCancel: (() => void) | null = null;
   private bytesAtQuotaCheck = 0;
   private micTrackCleanup: (() => void) | null = null;
+  private compositor: CameraCompositor | null = null;
 
   /* ---------------- store plumbing (useSyncExternalStore) ---------------- */
   getState = () => this.state;
@@ -88,11 +92,12 @@ export class RecorderEngine {
   /* ------------------------------- start ------------------------------- */
 
   /**
-   * Start a recording. `micStream` is owned by the caller (the setup preview) and is
-   * NOT stopped by the engine. Throws an Error with a user-friendly message on failure;
+   * Start a recording. `micStream` and `cameraStream` are owned by the caller (the setup
+   * preview) and are NOT stopped by the engine. The camera is only used here in
+   * composite mode; the floating bubble is captured as part of the screen. Throws an Error with a user-friendly message on failure;
    * no OPFS files are created unless capture permissions were granted.
    */
-  async start(settings: RecordingSettings, micStream: MediaStream | null): Promise<void> {
+  async start(settings: RecordingSettings, micStream: MediaStream | null, cameraStream: MediaStream | null = null): Promise<void> {
     if (this.state.phase !== 'idle') return;
 
     if (!isOpfsSupported()) throw new Error('This browser does not support the Origin Private File System, which is required for unlimited disk-streamed recording. Please use a recent Chrome, Edge, Firefox or Safari.');
@@ -150,7 +155,32 @@ export class RecorderEngine {
         }
       }
 
-      const tracks = [videoTrack, ...(this.mixer ? this.mixer.audioTracks : [])];
+      // Composite mode: record screen + camera bubble drawn together in a worker.
+      let recordedVideo: MediaStreamTrack = videoTrack;
+      const cameraTrack = cameraStream?.getVideoTracks().find((t) => t.readyState === 'live');
+      if (settings.cameraEnabled && settings.cameraMode === 'composite' && cameraTrack) {
+        if (isCompositorSupported()) {
+          this.compositor = new CameraCompositor(videoTrack, cameraTrack, {
+            fps: settings.fps,
+            size: settings.bubbleSize,
+            corner: settings.bubbleCorner,
+            onCameraEnded: () => {
+              if (!this.state.cameraLive) return;
+              this.set({ cameraLive: false });
+              this.toast('warning', 'Camera disconnected. Recording continues without the camera bubble.');
+            },
+            onError: (msg) => {
+              this.toast('error', `Camera bubble error: ${msg}. Saving what was recorded.`);
+              void this.stop();
+            },
+          });
+          recordedVideo = this.compositor.track;
+        } else {
+          this.toast('warning', 'This browser cannot burn the camera into the video — recording the screen only.');
+        }
+      }
+
+      const tracks = [recordedVideo, ...(this.mixer ? this.mixer.audioTracks : [])];
       const combined = new MediaStream(tracks);
       const recorder = new MediaRecorder(combined, {
         mimeType: mime.mimeType,
@@ -178,6 +208,7 @@ export class RecorderEngine {
         updatedAt: now,
         hasMic: !!micUsable,
         hasSystemAudio: !!this.mixer?.hasSystem,
+        hasCamera: !!this.compositor,
       };
       this.releaseLock = holdSessionLock(id);
       await storageWorker.open(id, mime.ext);
@@ -199,7 +230,7 @@ export class RecorderEngine {
 
       recorder.start(1000);
       this.meta.startTime = Date.now();
-      this.set({ phase: 'recording', meta: { ...this.meta }, micLive: !!micUsable, micMuted: false });
+      this.set({ phase: 'recording', meta: { ...this.meta }, micLive: !!micUsable, micMuted: false, cameraLive: !!this.compositor, cameraHidden: false });
 
       this.timers.push(window.setInterval(() => void this.persistMeta(), META_INTERVAL_MS));
       this.timers.push(window.setInterval(() => void this.checkQuota(), QUOTA_INTERVAL_MS));
@@ -357,6 +388,13 @@ export class RecorderEngine {
     this.setMuted(!this.state.micMuted);
   }
 
+  /** Composite mode only: hide/show the burned-in camera bubble without stopping anything. */
+  setCameraHidden(hidden: boolean) {
+    if (!this.compositor) return;
+    this.compositor.setVisible(!hidden);
+    this.set({ cameraHidden: hidden });
+  }
+
   setMicGain(gain: number) {
     this.mixer?.setMicGain(gain);
   }
@@ -422,6 +460,8 @@ export class RecorderEngine {
     this.display = null;
     this.micTrackCleanup?.();
     this.micTrackCleanup = null;
+    this.compositor?.dispose();
+    this.compositor = null;
     this.mixer?.dispose();
     this.mixer = null;
     if (this.recorder) {

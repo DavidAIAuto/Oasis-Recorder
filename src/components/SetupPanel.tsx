@@ -1,8 +1,8 @@
-import { AppWindow, Circle, Mic, MicOff, Monitor, PanelTop, RefreshCw, Timer, Volume2 } from 'lucide-react';
+import { AppWindow, Circle, Mic, MicOff, Monitor, PanelTop, PictureInPicture2, RefreshCw, Timer, Video, VideoOff, Volume2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { estimateMBPerHour } from '../services/mediaCapture';
 import { cx, formatBytes } from '../lib/format';
-import type { FpsPreset, QuotaInfo, RecordingSettings, ResolutionPreset, ShareSurface } from '../types/recording';
+import type { BubbleCorner, BubbleSize, CameraMode, FpsPreset, QuotaInfo, RecordingSettings, ResolutionPreset, ShareSurface } from '../types/recording';
 import { isElectron } from '../lib/platform';
 
 const SURFACES: { value: ShareSurface; label: string; sub: string; icon: typeof Monitor }[] = [
@@ -10,6 +10,7 @@ const SURFACES: { value: ShareSurface; label: string; sub: string; icon: typeof 
   { value: 'window', label: 'Window', sub: 'Zoom, Meet, IDE…', icon: AppWindow },
   { value: 'browser', label: 'Browser Tab', sub: 'Single tab + its audio', icon: PanelTop },
 ];
+import { CameraVideo } from './CameraBubble';
 import { VuMeter } from './VuMeter';
 
 interface Props {
@@ -24,7 +25,33 @@ interface Props {
   busy: boolean;
   onStart: () => void;
   systemAudioHint: string;
+  camera: CameraSetup;
 }
+
+export interface CameraSetup {
+  /** No camera bubble mode works in this browser. */
+  supported: boolean;
+  floatingAvailable: boolean;
+  compositeAvailable: boolean;
+  /** The mode that will actually be used (the saved one may be unavailable here). */
+  mode: CameraMode;
+  devices: MediaDeviceInfo[];
+  stream: MediaStream | null;
+  error: string | null;
+  /** Inline preview (skipped when the floating bubble window itself is the preview). */
+  showPreview: boolean;
+  /** Web floating mode: the bubble lives in a PiP window that needs a click to open. */
+  canOpenBubble: boolean;
+  bubbleOpen: boolean;
+  onOpenBubble: () => void;
+}
+
+const CORNERS: { value: BubbleCorner; label: string }[] = [
+  { value: 'tl', label: '↖' },
+  { value: 'tr', label: '↗' },
+  { value: 'bl', label: '↙' },
+  { value: 'br', label: '↘' },
+];
 
 function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
   return (
@@ -229,6 +256,10 @@ export function SetupPanel(p: Props) {
 
         <div className="h-px bg-zinc-800" />
 
+        <CameraSection s={s} onChange={onChange} c={p.camera} onRefresh={p.onRefreshMics} />
+
+        <div className="h-px bg-zinc-800" />
+
         <Row icon={<Volume2 className="size-5" />} title="System audio" hint={p.systemAudioHint}>
           <Switch label="Capture system audio" checked={s.systemAudio} onChange={(systemAudio) => onChange({ systemAudio })} />
         </Row>
@@ -248,5 +279,87 @@ export function SetupPanel(p: Props) {
         </button>
       </div>
     </div>
+  );
+}
+
+function CameraSection({ s, onChange, c, onRefresh }: { s: RecordingSettings; onChange: Props['onChange']; c: CameraSetup; onRefresh: () => void }) {
+  const hint = !c.supported
+    ? 'Needs Chrome/Edge or the Mac app'
+    : !s.cameraEnabled
+      ? 'Off'
+      : c.mode === 'floating'
+        ? 'Bubble floats on your screen — record "Entire Screen" to capture it'
+        : 'Bubble is drawn into the video, whatever you share';
+  return (
+    <>
+      <Row icon={s.cameraEnabled && c.supported ? <Video className="size-5" /> : <VideoOff className="size-5" />} title="Camera bubble" hint={hint}>
+        <Switch label="Enable camera bubble" checked={s.cameraEnabled && c.supported} disabled={!c.supported} onChange={(cameraEnabled) => onChange({ cameraEnabled })} />
+      </Row>
+
+      {s.cameraEnabled && c.supported && (
+        <div className="space-y-4 border-l-2 border-zinc-800 pl-4">
+          <div className="flex gap-2">
+            <select
+              aria-label="Camera device"
+              value={s.cameraDeviceId ?? ''}
+              onChange={(e) => onChange({ cameraDeviceId: e.target.value || null })}
+              className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-red-500 focus:outline-none"
+            >
+              <option value="">Default camera</option>
+              {c.devices
+                .filter((d) => d.deviceId && d.deviceId !== 'default')
+                .map((d, i) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `Camera ${i + 1}`}
+                  </option>
+                ))}
+            </select>
+            <button onClick={onRefresh} className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 text-zinc-300 hover:bg-zinc-700" aria-label="Refresh cameras" title="Refresh cameras">
+              <RefreshCw className="size-4" />
+            </button>
+          </div>
+
+          <div className="flex items-start gap-4">
+            {c.showPreview && (
+              <div className="size-24 shrink-0 overflow-hidden rounded-full bg-zinc-800 ring-2 ring-zinc-700">
+                {c.stream && <CameraVideo stream={c.stream} />}
+              </div>
+            )}
+            <div className="min-w-0 flex-1 space-y-3">
+              {c.floatingAvailable && c.compositeAvailable && (
+                <Segmented<CameraMode>
+                  label="Camera mode"
+                  value={c.mode}
+                  onChange={(cameraMode) => onChange({ cameraMode })}
+                  options={[
+                    { value: 'floating', label: 'Floating' },
+                    { value: 'composite', label: 'In video' },
+                  ]}
+                />
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <Segmented<BubbleSize>
+                  label="Bubble size"
+                  value={s.bubbleSize}
+                  onChange={(bubbleSize) => onChange({ bubbleSize })}
+                  options={[
+                    { value: 'S', label: 'S' },
+                    { value: 'M', label: 'M' },
+                    { value: 'L', label: 'L' },
+                  ]}
+                />
+                {c.mode === 'composite' && <Segmented<BubbleCorner> label="Bubble corner" value={s.bubbleCorner} onChange={(bubbleCorner) => onChange({ bubbleCorner })} options={CORNERS} />}
+              </div>
+              {c.canOpenBubble && !c.bubbleOpen && (
+                <button onClick={c.onOpenBubble} className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700">
+                  <PictureInPicture2 className="size-4" /> Show bubble
+                </button>
+              )}
+            </div>
+          </div>
+          {c.error && <p className="text-xs leading-relaxed text-red-300">{c.error}</p>}
+        </div>
+      )}
+    </>
   );
 }

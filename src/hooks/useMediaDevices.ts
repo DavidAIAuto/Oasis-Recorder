@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AudioMixer } from '../services/audioMixer';
-import { describeMediaError, getMicStream, listMics, stopStream } from '../services/mediaCapture';
+import { describeMediaError, getCameraStream, getMicStream, listDevices, stopStream } from '../services/mediaCapture';
 
 export type PermissionStateX = 'granted' | 'denied' | 'prompt' | 'unknown';
 
-/** Microphone list + permission state, kept fresh on hot-plug (devicechange). */
+/** Microphone + camera lists and mic permission state, kept fresh on hot-plug (devicechange). */
 export function useMediaDevices() {
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [permission, setPermission] = useState<PermissionStateX>('unknown');
 
   const refresh = useCallback(async () => {
     try {
-      setMics(await listMics());
+      setMics(await listDevices('audioinput'));
+      setCameras(await listDevices('videoinput'));
     } catch {
       setMics([]);
+      setCameras([]);
     }
   }, []);
 
@@ -41,7 +44,7 @@ export function useMediaDevices() {
     };
   }, [refresh]);
 
-  return { mics, permission, setPermission, refresh };
+  return { mics, cameras, permission, setPermission, refresh };
 }
 
 export interface MicPreviewOptions {
@@ -148,4 +151,68 @@ export function useMicPreview(o: MicPreviewOptions) {
   useEffect(() => () => release(), [release]);
 
   return { stream, analyser, error, ended, retry: () => setEnded(false) };
+}
+
+export interface CameraPreviewOptions {
+  enabled: boolean;
+  deviceId: string | null;
+  /** When true the stream is in use by the recorder and won't be re-acquired. */
+  locked: boolean;
+  onAcquired?: () => void;
+}
+
+/**
+ * Owns the live camera stream. The setup preview, the floating bubble and the
+ * compositor only borrow it; none of them stop it.
+ */
+export function useCameraPreview(o: CameraPreviewOptions) {
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const onAcquiredRef = useRef(o.onAcquired);
+  onAcquiredRef.current = o.onAcquired;
+
+  const release = useCallback(() => {
+    stopStream(streamRef.current);
+    streamRef.current = null;
+    setStream(null);
+  }, []);
+
+  useEffect(() => {
+    if (o.locked) return; // never swap the camera under an active recording
+    if (!o.enabled) {
+      release();
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await getCameraStream(o.deviceId);
+        if (cancelled) {
+          stopStream(s);
+          return;
+        }
+        release();
+        streamRef.current = s;
+        setStream(s);
+        setError(null);
+        s.getVideoTracks()[0]?.addEventListener('ended', () => {
+          if (streamRef.current === s) setError('The camera was disconnected.');
+        });
+        onAcquiredRef.current?.();
+      } catch (e) {
+        if (cancelled) return;
+        release();
+        setError(describeMediaError(e, 'camera'));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [o.enabled, o.deviceId, o.locked, release]);
+
+  useEffect(() => () => release(), [release]);
+
+  return { stream, error };
 }

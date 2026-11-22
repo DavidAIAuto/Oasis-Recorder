@@ -10,6 +10,7 @@ const {
   Menu,
   net,
   protocol,
+  screen,
   session,
   shell,
   systemPreferences,
@@ -130,6 +131,90 @@ function showPicker() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Camera bubble                                                       */
+/* ------------------------------------------------------------------ */
+
+// A frameless, transparent, always-on-top round window showing the webcam. It's one of
+// our own windows, so the picker doesn't list it, but screen recordings capture it.
+const BUBBLE_PX = { S: 160, M: 220, L: 300 };
+const BUBBLE_MARGIN = 24;
+/** @type {BrowserWindow | null} */
+let bubbleWindow = null;
+let bubbleDeviceId = null;
+
+function bubbleSizePx(size) {
+  return BUBBLE_PX[size] ?? BUBBLE_PX.M;
+}
+
+function loadBubble(deviceId) {
+  bubbleDeviceId = deviceId;
+  void bubbleWindow?.loadFile(path.join(__dirname, 'bubble.html'), { query: deviceId ? { deviceId } : {} });
+}
+
+async function showBubble({ deviceId, size }) {
+  const px = bubbleSizePx(size);
+  deviceId = typeof deviceId === 'string' && deviceId ? deviceId : null;
+
+  if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+    const b = bubbleWindow.getBounds();
+    if (b.width !== px) {
+      // Resize around the bubble's centre so it stays where the user dragged it, but keep it on screen.
+      const area = screen.getDisplayMatching(b).workArea;
+      const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
+      bubbleWindow.setBounds({
+        x: clamp(Math.round(b.x + (b.width - px) / 2), area.x, area.x + area.width - px),
+        y: clamp(Math.round(b.y + (b.height - px) / 2), area.y, area.y + area.height - px),
+        width: px,
+        height: px,
+      });
+    }
+    if (deviceId !== bubbleDeviceId) loadBubble(deviceId);
+    bubbleWindow.showInactive();
+    return;
+  }
+
+  if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('camera') === 'not-determined') {
+    await systemPreferences.askForMediaAccess('camera').catch(() => false);
+  }
+
+  const display = mainWindow ? screen.getDisplayMatching(mainWindow.getBounds()) : screen.getPrimaryDisplay();
+  const area = display.workArea;
+  bubbleWindow = new BrowserWindow({
+    x: area.x + BUBBLE_MARGIN,
+    y: area.y + area.height - px - BUBBLE_MARGIN,
+    width: px,
+    height: px,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    show: false,
+    title: 'Recoder Camera',
+    webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false },
+  });
+  bubbleWindow.setAlwaysOnTop(true, 'floating');
+  bubbleWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  bubbleWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  bubbleWindow.once('ready-to-show', () => bubbleWindow?.showInactive());
+  bubbleWindow.on('closed', () => {
+    bubbleWindow = null;
+    bubbleDeviceId = null;
+  });
+  loadBubble(deviceId);
+}
+
+function hideBubble() {
+  if (bubbleWindow && !bubbleWindow.isDestroyed()) bubbleWindow.close();
+}
+
+ipcMain.on('recoder:bubble-show', (_e, opts) => void showBubble(opts && typeof opts === 'object' ? opts : {}));
+ipcMain.on('recoder:bubble-hide', () => hideBubble());
+
+/* ------------------------------------------------------------------ */
 /* App window                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -172,7 +257,10 @@ function createWindow() {
   });
 
   void mainWindow.loadURL(DEV_URL || `${APP_ORIGIN}/index.html`);
-  mainWindow.on('closed', () => (mainWindow = null));
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    hideBubble();
+  });
 }
 
 function buildMenu() {
@@ -202,10 +290,16 @@ app.whenReady().then(() => {
   const ses = session.defaultSession;
   const allowed = new Set(['media', 'display-capture', 'fileSystem', 'clipboard-sanitized-write', 'window-management']);
   const trusted = (origin) => origin.startsWith(APP_ORIGIN) || (DEV_URL && origin.startsWith(new URL(DEV_URL).origin));
+  // The camera bubble is a local file:// page; it may only use the camera.
+  const isBubble = (wc) => !!wc && !!bubbleWindow && !bubbleWindow.isDestroyed() && wc.id === bubbleWindow.webContents.id;
   ses.setPermissionRequestHandler((wc, permission, callback, details) => {
+    if (isBubble(wc)) return callback(permission === 'media');
     callback(allowed.has(permission) && trusted(details.requestingUrl || wc.getURL()));
   });
-  ses.setPermissionCheckHandler((_wc, permission, origin) => allowed.has(permission) && trusted(origin));
+  ses.setPermissionCheckHandler((wc, permission, origin) => {
+    if (isBubble(wc)) return permission === 'media';
+    return allowed.has(permission) && trusted(origin);
+  });
 
   // getDisplayMedia() → our own picker of screens and windows.
   ses.setDisplayMediaRequestHandler(async (request, callback) => {

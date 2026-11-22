@@ -75,10 +75,22 @@ export async function getMicStream(o: MicOptions): Promise<MediaStream> {
   });
 }
 
-export async function listMics(): Promise<MediaDeviceInfo[]> {
+export async function getCameraStream(deviceId: string | null): Promise<MediaStream> {
+  return navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30, max: 30 },
+    },
+  });
+}
+
+export async function listDevices(kind: MediaDeviceKind): Promise<MediaDeviceInfo[]> {
   if (!navigator.mediaDevices?.enumerateDevices) return [];
   const all = await navigator.mediaDevices.enumerateDevices();
-  return all.filter((d) => d.kind === 'audioinput');
+  return all.filter((d) => d.kind === kind);
 }
 
 // MP4 (H.264 + AAC) first: plays everywhere (QuickTime, iPhone, editors) and needs no
@@ -128,8 +140,15 @@ export function stopStream(s: MediaStream | null | undefined) {
 }
 
 /** Turn a getUserMedia/getDisplayMedia error into a friendly message. */
-export function describeMediaError(e: unknown, source: 'screen' | 'microphone'): string {
+export function describeMediaError(e: unknown, source: 'screen' | 'microphone' | 'camera'): string {
   const name = e instanceof DOMException ? e.name : (e as Error)?.name;
+  if (source === 'camera') {
+    if (name === 'NotAllowedError' || name === 'SecurityError')
+      return 'Camera access was denied. Click the lock/site-settings icon in the address bar, set Camera to "Allow", then reload — or turn the camera off.';
+    if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'The selected camera could not be found. Pick another one or click Refresh.';
+    if (name === 'NotReadableError' || name === 'AbortError') return 'The camera is in use by another application or could not be opened.';
+    return `Camera error: ${(e as Error)?.message ?? String(e)}`;
+  }
   if (name === 'NotAllowedError' || name === 'SecurityError') {
     return source === 'screen'
       ? 'Screen sharing was blocked or cancelled. Click "Start Recording" again and pick a screen, window or tab. If no prompt appears, allow screen recording for your browser in System Settings → Privacy & Security → Screen Recording, then restart the browser.'

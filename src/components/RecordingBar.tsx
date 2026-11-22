@@ -1,4 +1,4 @@
-import { HardDrive, Mic, MicOff, Pause, PictureInPicture2, Play, Square } from 'lucide-react';
+import { HardDrive, Mic, MicOff, Pause, PictureInPicture2, Play, Square, Video, VideoOff } from 'lucide-react';
 import { cx, formatBytes, formatDuration } from '../lib/format';
 import type { EngineState } from '../types/recording';
 import { VuMeter } from './VuMeter';
@@ -17,6 +17,8 @@ interface Props extends RecordingControlsProps {
   pipSupported: boolean;
   pipOpen: boolean;
   onTogglePip: () => void;
+  /** Present when a camera bubble is part of this recording. */
+  camera?: { hidden: boolean; disabled?: boolean; onToggle: () => void };
 }
 
 export function RecordingBar(p: Props) {
@@ -93,6 +95,17 @@ export function RecordingBar(p: Props) {
           <Square className="size-4 fill-white" />
           Stop &amp; Save
         </button>
+        {p.camera && (
+          <button
+            onClick={p.camera.onToggle}
+            disabled={stopping || p.camera.disabled}
+            aria-pressed={p.camera.hidden}
+            className="flex items-center gap-2 rounded-xl border border-zinc-700 px-4 py-3 text-sm text-zinc-300 transition hover:bg-zinc-800 disabled:opacity-40"
+          >
+            {p.camera.hidden ? <Video className="size-4" /> : <VideoOff className="size-4" />}
+            {p.camera.hidden ? 'Show Camera' : 'Hide Camera'}
+          </button>
+        )}
         {p.pipSupported && (
           <button
             onClick={p.onTogglePip}

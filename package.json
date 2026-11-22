@@ -64,7 +64,7 @@
       "hardenedRuntime": false,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Recoder records your microphone so your voice is included in screen recordings.",
-        "NSCameraUsageDescription": "Recoder does not use the camera.",
+        "NSCameraUsageDescription": "Recoder shows your camera in a bubble on your recordings.",
         "NSScreenCaptureUsageDescription": "Recoder records your screen or the windows you choose.",
         "NSAudioCaptureUsageDescription": "Recoder can include your Mac's audio in recordings."
       }

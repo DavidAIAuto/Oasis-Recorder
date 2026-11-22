@@ -1,5 +1,5 @@
 import { Mic, MicOff, Pause, Play, Square } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { type ReactNode, useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cx, formatDuration } from '../lib/format';
 import type { RecordingControlsProps } from './RecordingBar';
@@ -27,21 +27,26 @@ function copyStyles(target: Document) {
   }
 }
 
-/** Document Picture-in-Picture window manager (Chrome/Edge 116+). */
+/** What the PiP window shows: the mini recording controls, or the floating camera bubble. */
+export type PipKind = 'controls' | 'bubble';
+
+/** Document Picture-in-Picture window manager (Chrome/Edge 116+). A page can have only one. */
 export function usePipWindow() {
   const [pipWindow, setPipWindow] = useState<Window | null>(null);
+  const [kind, setKind] = useState<PipKind>('controls');
 
-  // Must be called synchronously from a user gesture.
-  const open = useCallback(async () => {
+  // Must be called synchronously from a user gesture. Replaces any open PiP window.
+  const open = useCallback(async (k: PipKind = 'controls', size = { width: 340, height: 120 }) => {
     const dpip = window.documentPictureInPicture;
     if (!dpip) return;
     try {
-      const w = await dpip.requestWindow({ width: 340, height: 120 });
+      const w = await dpip.requestWindow(size);
       copyStyles(w.document);
       w.document.documentElement.className = 'dark';
       w.document.body.className = 'bg-zinc-950 text-zinc-100 antialiased m-0';
-      w.document.title = 'Recoder';
-      w.addEventListener('pagehide', () => setPipWindow(null));
+      w.document.title = k === 'bubble' ? 'Recoder Camera' : 'Recoder';
+      w.addEventListener('pagehide', () => setPipWindow((cur) => (cur === w ? null : cur)));
+      setKind(k);
       setPipWindow(w);
     } catch {
       setPipWindow(null);
@@ -55,7 +60,7 @@ export function usePipWindow() {
     });
   }, []);
 
-  return { pipWindow, open, close };
+  return { pipWindow, kind, open, close };
 }
 
 function MiniBar(p: RecordingControlsProps) {
@@ -97,7 +102,7 @@ function MiniBar(p: RecordingControlsProps) {
   );
 }
 
-export function MiniPiPControls({ pipWindow, ...controls }: RecordingControlsProps & { pipWindow: Window | null }) {
+export function MiniPiPControls({ pipWindow, children, ...controls }: RecordingControlsProps & { pipWindow: Window | null; children?: ReactNode }) {
   if (!pipWindow) return null;
-  return createPortal(<MiniBar {...controls} />, pipWindow.document.body);
+  return createPortal(children ?? <MiniBar {...controls} />, pipWindow.document.body);
 }

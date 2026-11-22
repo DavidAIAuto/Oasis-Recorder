@@ -18,12 +18,13 @@ export function useRecorder(handlers: {
     [onToast, onFinished],
   );
 
-  const start = useCallback((s: RecordingSettings, mic: MediaStream | null) => recorderEngine.start(s, mic), []);
+  const start = useCallback((s: RecordingSettings, mic: MediaStream | null, camera: MediaStream | null) => recorderEngine.start(s, mic, camera), []);
   const stop = useCallback(() => recorderEngine.stop(), []);
   const pause = useCallback(() => recorderEngine.pause(), []);
   const resume = useCallback(() => recorderEngine.resume(), []);
   const toggleMute = useCallback(() => recorderEngine.toggleMute(), []);
   const setMicGain = useCallback((g: number) => recorderEngine.setMicGain(g), []);
+  const setCameraHidden = useCallback((h: boolean) => recorderEngine.setCameraHidden(h), []);
 
   return {
     state,
@@ -34,6 +35,7 @@ export function useRecorder(handlers: {
     resume,
     toggleMute,
     setMicGain,
+    setCameraHidden,
   };
 }
 

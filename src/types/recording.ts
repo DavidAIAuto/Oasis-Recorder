@@ -1,6 +1,10 @@
 export type ResolutionPreset = '720p' | '1080p' | 'native';
 export type FpsPreset = 30 | 60;
 export type ShareSurface = 'monitor' | 'window' | 'browser';
+/** floating = on-screen bubble captured with the screen; composite = burned into the video. */
+export type CameraMode = 'floating' | 'composite';
+export type BubbleSize = 'S' | 'M' | 'L';
+export type BubbleCorner = 'bl' | 'br' | 'tl' | 'tr';
 
 export interface RecordingSettings {
   shareSurface: ShareSurface;
@@ -14,6 +18,11 @@ export interface RecordingSettings {
   noiseSuppression: boolean;
   autoGainControl: boolean;
   countdown: boolean;
+  cameraEnabled: boolean;
+  cameraDeviceId: string | null;
+  cameraMode: CameraMode;
+  bubbleSize: BubbleSize;
+  bubbleCorner: BubbleCorner;
 }
 
 export type RecordingStatus = 'recording' | 'paused' | 'completed';
@@ -32,6 +41,8 @@ export interface RecordingMeta {
   updatedAt: number;
   hasMic: boolean;
   hasSystemAudio: boolean;
+  /** Camera burned into the video (composite mode). */
+  hasCamera?: boolean;
   recovered?: boolean;
 }
 
@@ -50,6 +61,9 @@ export interface EngineState {
   bytesWritten: number;
   micMuted: boolean;
   micLive: boolean;
+  /** Composite camera is part of this recording and its track is live. */
+  cameraLive: boolean;
+  cameraHidden: boolean;
   quota: QuotaInfo | null;
   lowSpace: boolean;
 }
