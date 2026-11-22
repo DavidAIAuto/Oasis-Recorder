@@ -9,6 +9,8 @@ export interface NativeBridge {
   /** Show (or update) the floating camera bubble window. */
   showBubble(deviceId: string | null, size: BubbleSize): void;
   hideBubble(): void;
+  /** The user closed the bubble with its × button. Returns an unsubscribe function. */
+  onBubbleClosed(cb: () => void): () => void;
 }
 
 declare global {

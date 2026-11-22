@@ -24,6 +24,7 @@ export class CameraCompositor {
   readonly track: MediaStreamTrack;
   private worker: Worker;
   private cameraClone: MediaStreamVideoTrack;
+  private disposed = false;
 
   // Types for MediaStreamTrackProcessor/Generator come from @types/dom-mediacapture-transform.
   constructor(screenTrack: MediaStreamTrack, cameraTrack: MediaStreamTrack, o: CompositorOptions) {
@@ -35,10 +36,13 @@ export class CameraCompositor {
 
     this.worker = new Worker(new URL('../workers/compositor.worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent<{ type: string; message?: string }>) => {
+      if (this.disposed) return;
       if (e.data.type === 'camera-ended') o.onCameraEnded();
       else if (e.data.type === 'error') o.onError(e.data.message ?? 'unknown error');
     };
-    this.worker.onerror = (e) => o.onError(e.message || 'Camera compositor crashed');
+    this.worker.onerror = (e) => {
+      if (!this.disposed) o.onError(e.message || 'Camera compositor crashed');
+    };
     this.post(
       { type: 'init', screen, camera, out: generator.writable, fps: o.fps, size: o.size, corner: o.corner },
       [screen, camera, generator.writable],
@@ -54,6 +58,12 @@ export class CameraCompositor {
   }
 
   dispose() {
+    if (this.disposed) return;
+    // Detach first: stopping the tracks below makes the worker report "camera ended" /
+    // write errors, which are expected here and must not surface as toasts.
+    this.disposed = true;
+    this.worker.onmessage = null;
+    this.worker.onerror = null;
     this.post({ type: 'stop' });
     // Give the worker a moment to close its frames/readers before it is torn down.
     const w = this.worker;

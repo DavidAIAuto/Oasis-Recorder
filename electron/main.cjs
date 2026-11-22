@@ -136,50 +136,55 @@ function showPicker() {
 
 // A frameless, transparent, always-on-top round window showing the webcam. It's one of
 // our own windows, so the picker doesn't list it, but screen recordings capture it.
+//
+// The renderer only states what it wants (show with these options / hide). The main
+// process converges on that desired state, so out-of-order or repeated messages, and a
+// hide that arrives while the camera permission prompt is open, can never leave an
+// orphaned bubble behind.
 const BUBBLE_PX = { S: 160, M: 220, L: 300 };
 const BUBBLE_MARGIN = 24;
 /** @type {BrowserWindow | null} */
 let bubbleWindow = null;
 let bubbleDeviceId = null;
+let bubbleWanted = false;
+/** @type {{ deviceId: string | null, size: string }} */
+let bubbleOpts = { deviceId: null, size: 'M' };
+let bubbleCreating = false;
+
+const bubbleAlive = () => !!bubbleWindow && !bubbleWindow.isDestroyed();
 
 function bubbleSizePx(size) {
   return BUBBLE_PX[size] ?? BUBBLE_PX.M;
 }
 
-function loadBubble(deviceId) {
+function loadBubble(win, deviceId) {
   bubbleDeviceId = deviceId;
-  void bubbleWindow?.loadFile(path.join(__dirname, 'bubble.html'), { query: deviceId ? { deviceId } : {} });
+  void win.loadFile(path.join(__dirname, 'bubble.html'), { query: deviceId ? { deviceId } : {} }).catch(() => {});
 }
 
-async function showBubble({ deviceId, size }) {
-  const px = bubbleSizePx(size);
-  deviceId = typeof deviceId === 'string' && deviceId ? deviceId : null;
-
-  if (bubbleWindow && !bubbleWindow.isDestroyed()) {
-    const b = bubbleWindow.getBounds();
-    if (b.width !== px) {
-      // Resize around the bubble's centre so it stays where the user dragged it, but keep it on screen.
-      const area = screen.getDisplayMatching(b).workArea;
-      const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
-      bubbleWindow.setBounds({
-        x: clamp(Math.round(b.x + (b.width - px) / 2), area.x, area.x + area.width - px),
-        y: clamp(Math.round(b.y + (b.height - px) / 2), area.y, area.y + area.height - px),
-        width: px,
-        height: px,
-      });
-    }
-    if (deviceId !== bubbleDeviceId) loadBubble(deviceId);
-    bubbleWindow.showInactive();
-    return;
+/** Bring an existing bubble window in line with the latest options. */
+function applyBubbleOpts(win) {
+  const px = bubbleSizePx(bubbleOpts.size);
+  const b = win.getBounds();
+  if (b.width !== px) {
+    // Resize around the bubble's centre so it stays where the user dragged it, but keep it on screen.
+    const area = screen.getDisplayMatching(b).workArea;
+    const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
+    win.setBounds({
+      x: clamp(Math.round(b.x + (b.width - px) / 2), area.x, area.x + area.width - px),
+      y: clamp(Math.round(b.y + (b.height - px) / 2), area.y, area.y + area.height - px),
+      width: px,
+      height: px,
+    });
   }
+  if (bubbleOpts.deviceId !== bubbleDeviceId) loadBubble(win, bubbleOpts.deviceId);
+}
 
-  if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('camera') === 'not-determined') {
-    await systemPreferences.askForMediaAccess('camera').catch(() => false);
-  }
-
-  const display = mainWindow ? screen.getDisplayMatching(mainWindow.getBounds()) : screen.getPrimaryDisplay();
+function createBubbleWindow() {
+  const px = bubbleSizePx(bubbleOpts.size);
+  const display = mainWindow && !mainWindow.isDestroyed() ? screen.getDisplayMatching(mainWindow.getBounds()) : screen.getPrimaryDisplay();
   const area = display.workArea;
-  bubbleWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     x: area.x + BUBBLE_MARGIN,
     y: area.y + area.height - px - BUBBLE_MARGIN,
     width: px,
@@ -194,25 +199,73 @@ async function showBubble({ deviceId, size }) {
     skipTaskbar: true,
     show: false,
     title: 'Recoder Camera',
-    webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false },
+    webPreferences: {
+      preload: path.join(__dirname, 'bubble-preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
   });
-  bubbleWindow.setAlwaysOnTop(true, 'floating');
-  bubbleWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  bubbleWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  bubbleWindow.once('ready-to-show', () => bubbleWindow?.showInactive());
-  bubbleWindow.on('closed', () => {
-    bubbleWindow = null;
-    bubbleDeviceId = null;
+  bubbleWindow = win;
+  bubbleDeviceId = null;
+  win.setAlwaysOnTop(true, 'floating');
+  // skipTransformProcessType: without it macOS turns Recoder into a background-only app
+  // (no Dock icon, no menu bar), leaving users unable to quit it.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    if (bubbleWanted && bubbleWindow === win) win.showInactive();
+    else win.destroy();
   });
-  loadBubble(deviceId);
+  win.on('closed', () => {
+    if (bubbleWindow === win) {
+      bubbleWindow = null;
+      bubbleDeviceId = null;
+    }
+  });
+  loadBubble(win, bubbleOpts.deviceId);
+}
+
+async function showBubble(opts) {
+  bubbleWanted = true;
+  bubbleOpts = {
+    deviceId: typeof opts.deviceId === 'string' && opts.deviceId ? opts.deviceId : null,
+    size: typeof opts.size === 'string' ? opts.size : 'M',
+  };
+  if (bubbleAlive()) {
+    applyBubbleOpts(bubbleWindow);
+    if (!bubbleWindow.isVisible()) bubbleWindow.showInactive();
+    return;
+  }
+  if (bubbleCreating) return; // the in-flight creation picks up the latest options
+  bubbleCreating = true;
+  try {
+    if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('camera') === 'not-determined') {
+      await systemPreferences.askForMediaAccess('camera').catch(() => false);
+    }
+    // The renderer may have hidden the bubble (or the app may be closing) while we waited.
+    if (bubbleWanted && !bubbleAlive() && mainWindow && !mainWindow.isDestroyed()) createBubbleWindow();
+  } finally {
+    bubbleCreating = false;
+  }
 }
 
 function hideBubble() {
-  if (bubbleWindow && !bubbleWindow.isDestroyed()) bubbleWindow.close();
+  bubbleWanted = false;
+  if (bubbleAlive()) bubbleWindow.destroy();
+  bubbleWindow = null;
+  bubbleDeviceId = null;
 }
 
 ipcMain.on('recoder:bubble-show', (_e, opts) => void showBubble(opts && typeof opts === 'object' ? opts : {}));
 ipcMain.on('recoder:bubble-hide', () => hideBubble());
+// × on the bubble itself: close it and tell the app so it can switch the camera off.
+ipcMain.on('recoder:bubble-close', (e) => {
+  if (!bubbleAlive() || e.sender.id !== bubbleWindow.webContents.id) return;
+  hideBubble();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('recoder:bubble-closed');
+});
 
 /* ------------------------------------------------------------------ */
 /* App window                                                          */
@@ -255,6 +308,12 @@ function createWindow() {
     });
     if (choice === 1) event.preventDefault();
   });
+
+  // A reload or crash of the app page resets its state, so the bubble must go with it.
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) hideBubble();
+  });
+  mainWindow.webContents.on('render-process-gone', () => hideBubble());
 
   void mainWindow.loadURL(DEV_URL || `${APP_ORIGIN}/index.html`);
   mainWindow.on('closed', () => {
@@ -331,10 +390,11 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!mainWindow) createWindow();
   });
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+// Closing the main window quits Recoder on every platform, so nothing (like the camera
+// bubble) can linger in the background.
+app.on('window-all-closed', () => app.quit());
+app.on('before-quit', () => hideBubble());

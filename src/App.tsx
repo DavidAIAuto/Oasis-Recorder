@@ -53,7 +53,9 @@ const DEFAULT_SETTINGS: RecordingSettings = {
 function loadSettings(): RecordingSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<RecordingSettings>) };
+    // The camera never switches itself on at launch (privacy, and no surprise bubble);
+    // the chosen device, mode, size and corner are still remembered.
+    if (raw) return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<RecordingSettings>), cameraEnabled: false };
   } catch {
     /* storage unavailable */
   }
@@ -88,8 +90,11 @@ export default function App() {
   // "in video" needs the worker compositor. Fall back to whichever mode this browser has.
   const floatingAvailable = isElectron || supported.pip;
   const cameraSupported = floatingAvailable || supported.compositor;
-  const cameraMode: CameraMode =
-    settings.cameraMode === 'composite' ? (supported.compositor ? 'composite' : 'floating') : floatingAvailable ? 'floating' : 'composite';
+  const effectiveCameraMode = useCallback(
+    (m: CameraMode): CameraMode => (m === 'composite' ? (supported.compositor ? 'composite' : 'floating') : floatingAvailable ? 'floating' : 'composite'),
+    [floatingAvailable, supported.compositor],
+  );
+  const cameraMode = effectiveCameraMode(settings.cameraMode);
   const cameraOn = settings.cameraEnabled && cameraSupported && supported.display;
   const electronFloating = isElectron && cameraOn && cameraMode === 'floating';
   const webFloating = !isElectron && cameraOn && cameraMode === 'floating';
@@ -226,15 +231,29 @@ export default function App() {
     else native.hideBubble();
   }, [electronFloating, nativeBubbleHidden, settings.cameraDeviceId, settings.bubbleSize]);
 
+  // The × on the desktop bubble switches the camera off (also mid-recording: floating mode
+  // doesn't involve the recorder, so nothing else changes).
+  const updateSettingsRef = useRef(updateSettings);
+  updateSettingsRef.current = updateSettings;
+  useEffect(() => native?.onBubbleClosed(() => updateSettingsRef.current({ cameraEnabled: false })), []);
+
+  // A camera that failed or was unplugged is retried when devices change (e.g. replugged).
+  const cameraError = camera.error;
+  const retryCamera = camera.retry;
+  useEffect(() => {
+    if (cameraError) retryCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devices.cameras]);
+
   // Setup changes come from clicks, so the PiP bubble can be opened right here (user activation).
   const onSetupChange = useCallback(
     (patch: Partial<RecordingSettings>) => {
       updateSettings(patch);
       const next = { ...settings, ...patch };
-      const turnedOn = patch.cameraEnabled === true || (patch.cameraMode === 'floating' && next.cameraEnabled);
-      if (turnedOn && !isElectron && supported.pip && next.cameraMode === 'floating' && !bubbleOpen) openBubble(next.bubbleSize);
+      const turnedOn = patch.cameraEnabled === true || (patch.cameraMode !== undefined && next.cameraEnabled);
+      if (turnedOn && !isElectron && supported.pip && effectiveCameraMode(next.cameraMode) === 'floating' && !bubbleOpen) openBubble(next.bubbleSize);
     },
-    [bubbleOpen, openBubble, settings, supported.pip, updateSettings],
+    [bubbleOpen, effectiveCameraMode, openBubble, settings, supported.pip, updateSettings],
   );
 
   /* ----------------------------- actions ----------------------------- */
@@ -400,6 +419,10 @@ export default function App() {
               onChange={onSetupChange}
               mics={devices.mics}
               onRefreshMics={devices.refresh}
+              onRefreshCameras={() => {
+                void devices.refresh();
+                camera.retry();
+              }}
               micLevel={level}
               micError={mic.error}
               micActive={!!mic.stream}

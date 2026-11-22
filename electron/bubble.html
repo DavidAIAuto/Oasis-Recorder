@@ -18,6 +18,15 @@
     padding: 18%; color: #d4d4d8; font: 500 12px/1.4 -apple-system, system-ui, sans-serif;
   }
   .error .msg { display: flex; }
+  /* Close button, revealed on hover; must opt out of the drag region to be clickable. */
+  .close {
+    position: absolute; top: 9%; right: 9%; width: 26px; height: 26px; border-radius: 50%;
+    border: 0; padding: 0; background: rgba(9, 9, 11, 0.8); color: #f4f4f5; cursor: pointer;
+    font: 600 16px/26px -apple-system, system-ui, sans-serif; text-align: center;
+    opacity: 0; transition: opacity 0.15s; -webkit-app-region: no-drag;
+  }
+  body:hover .close { opacity: 1; }
+  .close:hover { background: #dc2626; }
   .error video { display: none; }
 </style>
 </head>
@@ -26,7 +35,9 @@
   <video id="v" autoplay muted playsinline></video>
   <div class="msg" id="msg"></div>
 </div>
+<button class="close" id="close" title="Turn camera off" aria-label="Turn camera off">×</button>
 <script>
+  document.getElementById('close').addEventListener('click', () => window.bubble?.close());
   (async () => {
     const deviceId = new URLSearchParams(location.search).get('deviceId');
     const fail = (text) => {

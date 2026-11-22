@@ -18,6 +18,7 @@ interface Props {
   onChange: (patch: Partial<RecordingSettings>) => void;
   mics: MediaDeviceInfo[];
   onRefreshMics: () => void;
+  onRefreshCameras: () => void;
   micLevel: number;
   micError: string | null;
   micActive: boolean;
@@ -256,7 +257,7 @@ export function SetupPanel(p: Props) {
 
         <div className="h-px bg-zinc-800" />
 
-        <CameraSection s={s} onChange={onChange} c={p.camera} onRefresh={p.onRefreshMics} />
+        <CameraSection s={s} onChange={onChange} c={p.camera} onRefresh={p.onRefreshCameras} />
 
         <div className="h-px bg-zinc-800" />
 

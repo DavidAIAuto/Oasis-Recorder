@@ -168,9 +168,12 @@ export interface CameraPreviewOptions {
 export function useCameraPreview(o: CameraPreviewOptions) {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const streamRef = useRef<MediaStream | null>(null);
   const onAcquiredRef = useRef(o.onAcquired);
   onAcquiredRef.current = o.onAcquired;
+  const lockedRef = useRef(o.locked);
+  lockedRef.current = o.locked;
 
   const release = useCallback(() => {
     stopStream(streamRef.current);
@@ -198,7 +201,11 @@ export function useCameraPreview(o: CameraPreviewOptions) {
         setStream(s);
         setError(null);
         s.getVideoTracks()[0]?.addEventListener('ended', () => {
-          if (streamRef.current === s) setError('The camera was disconnected.');
+          if (streamRef.current !== s) return;
+          // Drop the dead stream so a retry (Refresh / replug) can open the camera again,
+          // unless a recording still references it (the engine handles that case).
+          if (!lockedRef.current) release();
+          setError('The camera was disconnected. Plug it back in or click Refresh.');
         });
         onAcquiredRef.current?.();
       } catch (e) {
@@ -210,9 +217,10 @@ export function useCameraPreview(o: CameraPreviewOptions) {
     return () => {
       cancelled = true;
     };
-  }, [o.enabled, o.deviceId, o.locked, release]);
+  }, [o.enabled, o.deviceId, o.locked, attempt, release]);
 
   useEffect(() => () => release(), [release]);
 
-  return { stream, error };
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  return { stream, error, retry };
 }
